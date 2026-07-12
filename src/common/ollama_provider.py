@@ -1,10 +1,10 @@
 from typing import List, Any
 import httpx
-from src.common.providers import LLMProvider, ChatMessage
+from src.common.providers import BaseProvider, ChatMessage
 
-class OllamaProvider(LLMProvider):
+class OllamaProvider(BaseProvider):
     """
-    Concrete implementation of LLMProvider for interacting with a local Ollama instance.
+    Concrete implementation of BaseProvider for interacting with a local Ollama instance.
     """
     
     def __init__(self, base_url: str = "http://localhost:11434", model_name: str = "llama3"):

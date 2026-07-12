@@ -10,7 +10,7 @@ class ChatMessage(BaseModel):
     role: str
     content: str
 
-class LLMProvider(ABC):
+class BaseProvider(ABC):
     """
     Abstract Base Class acting as the strict contract for all AI providers
     integrated into the Aegis Guard ecosystem.
