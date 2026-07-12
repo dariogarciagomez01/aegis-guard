@@ -1,10 +1,9 @@
 import time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
+from src.common.factory import ProviderFactory
 from pydantic import BaseModel
-
 from src.common.providers import ChatMessage
-from src.common.ollama_provider import OllamaProvider
 
 app = FastAPI(
     title="Aegis Guard Proxy",
@@ -26,7 +25,7 @@ async def health_check():
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """
-    Intercepts LLM requests, routes them to the local Ollama instance,
+    Intercepts LLM requests, routes them dynamically via ProviderFactory,
     measures high-resolution network latency, and injects custom metadata.
     """
     # Start high-resolution performance clock
@@ -34,7 +33,7 @@ async def chat_completions(request: ChatCompletionRequest):
     
     try:
         # Instantiate the local provider dynamically using the requested model
-        provider = OllamaProvider(model_name=request.model)
+        provider = ProviderFactory.get_provider(request.model)
         
         # Await the asynchronous request to the local Ollama daemon
         raw_response = await provider.generate(
@@ -45,6 +44,9 @@ async def chat_completions(request: ChatCompletionRequest):
         # Calculate precise latency in milliseconds
         end_time = time.perf_counter()
         latency_seconds = end_time - start_time
+
+        # Dynamically extract provider identity (e.g., "OllamaProvider" -> "ollama")
+        provider_name = provider.__class__.__name__.replace("Provider", "").lower()
         
         # Build standard compliance payload + Aegis Guard telemetry
         return {
@@ -64,7 +66,7 @@ async def chat_completions(request: ChatCompletionRequest):
             ],
             "_aegis_guard_meta": {
                 "latency_ms": round(latency_seconds * 1000, 2),
-                "provider": "ollama",
+                "provider": provider_name,
                 "status": "intercepted_and_processed"
             }
         }
@@ -74,4 +76,4 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         # Global catch-all shield to protect internal infrastructure logs
-        raise HTTPException(status_code=500, detail=f"Internal Proxy Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal Proxy Error")
