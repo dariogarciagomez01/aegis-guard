@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-from typing import List, Any
+from typing import List, Any, AsyncGenerator
 
 class ChatMessage(BaseModel):
     """
@@ -26,4 +26,17 @@ class BaseProvider(ABC):
         :param kwargs: Additional model parameters (temperature, max_tokens, etc.).
         :return: The generated text response from the model.
         """
+        pass
+
+    @abstractmethod
+    async def generate_stream(self, messages: List[ChatMessage], **kwargs: Any) -> AsyncGenerator[str, None]:
+        """
+        Asynchronously streams the generated tokens from the upstream LLM provider
+        as they become available.
+        
+        :param messages: A list of ChatMessage objects representing the conversation history.
+        :param kwargs: Additional model parameters (temperature, max_tokens, etc.).
+        :return: An async generator yielding text tokens (chunks) as strings.
+        """
+
         pass
