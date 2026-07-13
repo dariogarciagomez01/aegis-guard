@@ -24,10 +24,10 @@ Without a Factory, the `main.py` route controller would have to evaluate the mod
 The implementation sequence inside the repository will follow these exact steps:
 
 1. **task 2.1: environment configuration and pydantic-settings setup**
-    Provisions `pydantic-settings` into the virtual environment, defines the environment schema in `src/common/config.py`, and secures credentials using `.env` validation.
+    Provisions `pydantic-settings` into the virtual environment, defines the environment schema in `src/common/config.py`, and secures credentials using `.env` validation. (DONE)
 2. **task 2.2: async openai provider implementation**
-    Develops the concrete cloud adapter utilizing `httpx.AsyncClient` to establish high-performance asynchronous connections to the official OpenAI endpoints.
+    Develops the concrete cloud adapter utilizing `httpx.AsyncClient` to establish high-performance asynchronous connections to the official OpenAI endpoints. (DONE)
 3. **task 2.3: dynamic provider factory pattern implementation**
-    Builds the central factory module to encapsulate instantiation, and refactors `src/proxy/main.py` to route traffic dynamically using the unified abstraction.
+    Builds the central factory module to encapsulate instantiation, and refactors `src/proxy/main.py` to route traffic dynamically using the unified abstraction. (DONE)
 4. **task 2.4: cross-routing integration testing and multi-model benchmarking**
-    Executes end-to-end integration tests using the interactive `/docs` UI to verify seamless routing across local and remote engines while capturing comparative latency metrics.
+    Executes end-to-end integration tests using the interactive `/docs` UI to verify seamless routing across local and remote engines while capturing comparative latency metrics. (DONE)
