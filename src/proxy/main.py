@@ -1,16 +1,28 @@
 import time
 import json
+import uuid
 from typing import List, Optional, Any
-from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+from src.database.connection import init_db
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from src.common.factory import ProviderFactory
 from pydantic import BaseModel
 from src.common.providers import ChatMessage
+from src.proxy.auth import authenticate_key
+from src.database.models import ApiKey
+from src.proxy.limiter import limiter
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 app = FastAPI(
     title="Aegis Guard Proxy",
     description="High-performance LLM reverse proxy and evaluation gateway",
-    version="0.2.0"
+    version="0.2.0",
+    lifespan = lifespan
 )
 
 # Schema matching the OpenAI standard for incoming requests
@@ -29,6 +41,9 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
     ttft_measured = False
     active_provider = primary_provider
     current_model = request.model
+
+    created_time = int(time.time())
+    stream_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     
     try:
         # Step 1: Attempt to establish network stream pool with the primary provider
@@ -46,9 +61,9 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
                 
             # Build standard-compliant OpenAI chunk payload
             chunk_payload = {
-                "id": f"chatcmpl-{int(time.time())}",
+                "id": stream_id,
                 "object": "chat.completion.chunk",
-                "created": int(time.time()),
+                "created": created_time,
                 "model": current_model,
                 "choices": [
                     {
@@ -78,9 +93,9 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
                 
                 async for token in fallback_stream:
                     chunk_payload = {
-                        "id": f"chatcmpl-{int(time.time())}",
+                        "id": stream_id,
                         "object": "chat.completion.chunk",
-                        "created": int(time.time()),
+                        "created": created_time,
                         "model": f"{fallback_model}-fallback",
                         "choices": [
                             {
@@ -106,11 +121,27 @@ async def health_check():
     return {"status": "healthy", "service": "aegis-guard-proxy"}
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(
+    request: ChatCompletionRequest,
+    api_key: ApiKey = Depends(authenticate_key)
+    ):
     """
     Intercepts LLM requests, routes them dynamically via ProviderFactory,
     measures high-resolution network latency, and injects custom metadata.
     """
+
+    if await limiter.is_rate_limited(api_key.key, api_key.rate_limit_rpm):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "message": "Requests rate limit exceeded. Please try again later.",
+                    "type": "requests_limit_reached",
+                    "param": None,
+                    "code": "429"
+                }
+            }
+        )
     
     try:
         # Instantiate the local provider dynamically using the requested model
@@ -123,6 +154,9 @@ async def chat_completions(request: ChatCompletionRequest):
                 execution_stream_generator(request, provider),
                 media_type="text/event-stream"
             )
+
+        static_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
+        static_created_time = int(time.time())
 
         # Modus operandi traditional (Static Response)
         start_time = time.perf_counter()
@@ -142,9 +176,9 @@ async def chat_completions(request: ChatCompletionRequest):
         
         # Build standard compliance payload + Aegis Guard telemetry
         return {
-            "id": f"chatcmpl-{int(time.time())}",
+            "id": static_id,
             "object": "chat.completion",
-            "created": int(time.time()),
+            "created": static_created_time,
             "model": request.model,
             "choices": [
                 {

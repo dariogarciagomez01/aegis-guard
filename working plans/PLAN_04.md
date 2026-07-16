@@ -27,8 +27,8 @@ Allowing public access to cloud endpoints invites denial-of-service vectors that
 ### 3. Technical Execution Roadmap
 The implementation sequence inside the repository will follow these exact steps:
 
-1. **task 4.1: database integration and multi-tenant schema modeling**
-   Configures the SQLModel storage engine, initializes the local SQLite database context manager, and defines the structural schemas for users, keys, and quotas.
+1. **task 4.1: database integration and multi-tenant schema modeling** 
+   Configures the SQLModel storage engine, initializes the local SQLite database context manager, and defines the structural schemas for users, keys, and quotas. (DONE)
 2. **task 4.2: extraction and validation authentication dependency**
    Builds the secure HTTP Bearer token extractor as a FastAPI dependency component, locking down the `/v1/chat/completions` endpoint against unauthenticated traffic.
 3. **task 4.3: localized high-performance rate limiting engine**
