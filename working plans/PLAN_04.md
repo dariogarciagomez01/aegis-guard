@@ -30,8 +30,8 @@ The implementation sequence inside the repository will follow these exact steps:
 1. **task 4.1: database integration and multi-tenant schema modeling** 
    Configures the SQLModel storage engine, initializes the local SQLite database context manager, and defines the structural schemas for users, keys, and quotas. (DONE)
 2. **task 4.2: extraction and validation authentication dependency**
-   Builds the secure HTTP Bearer token extractor as a FastAPI dependency component, locking down the `/v1/chat/completions` endpoint against unauthenticated traffic.
+   Builds the secure HTTP Bearer token extractor as a FastAPI dependency component, locking down the `/v1/chat/completions` endpoint against unauthenticated traffic. (DONE)
 3. **task 4.3: localized high-performance rate limiting engine**
-   Architects a non-blocking, thread-safe in-memory sliding window tracking system to record request intervals per authenticated API key.
+   Architects a non-blocking, thread-safe in-memory sliding window tracking system to record request intervals per authenticated API key. (DONE)
 4. **task 4.4: standard-compliant load shedding and error mapping**
-   Integrates explicit exception handlers to intercept failures, returning standardized HTTP 401 (Unauthorized) and HTTP 429 (Too Many Requests) JSON payloads matching global upstream standards.
+   Integrates explicit exception handlers to intercept failures, returning standardized HTTP 401 (Unauthorized) and HTTP 429 (Too Many Requests) JSON payloads matching global upstream standards. (DONE)
