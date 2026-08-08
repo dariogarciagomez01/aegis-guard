@@ -1,6 +1,7 @@
 from src.common.providers import BaseProvider
 from src.common.ollama_provider import OllamaProvider
 from src.common.openai_provider import OpenAIProvider
+from src.common.config import settings
 
 class ProviderFactory:
     """
@@ -25,4 +26,4 @@ class ProviderFactory:
             
         # Local Infrastructure Routing Architecture
         # Defaulting to Ollama for local models (e.g., llama3, mistral, phi3)
-        return OllamaProvider(model_name=model_name)
+        return OllamaProvider(base_url=settings.OLLAMA_BASE_URL, model_name=model_name)

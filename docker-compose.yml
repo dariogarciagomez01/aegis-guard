@@ -1,0 +1,18 @@
+services:
+  aegis-guard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aegis-guard-proxy
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Conectamos la base de datos relacional (Usuarios y Keys)
+      - ./aegis_guard.db:/app/aegis_guard.db
+      # Conectamos la base de datos vectorial (Caché Semántica)
+      - ./src/database/vector_store:/app/src/database/vector_store
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
