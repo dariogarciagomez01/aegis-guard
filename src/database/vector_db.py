@@ -3,6 +3,7 @@ import lancedb
 import time
 import pyarrow as pa
 from typing import List, Optional
+from src.utils.logger import logger
 
 # Local Storage path for LanceDB
 DB_PATH = os.path.join("src", "database", "vector_store")
@@ -45,13 +46,12 @@ def init_vector_db(vector_dim: int = 768):
         pa.field("created_at", pa.float64())
     ])
     
-    if TABLE_NAME in db.table_names():
+    try:
         _cache_table = db.open_table(TABLE_NAME)
-        print(f"[VECTOR-DB] Loaded existing semantic cache table: '{TABLE_NAME}'")
-    else:
-        # Creates the clean table with the defined schema
-        _cache_table = db.create_table(TABLE_NAME, schema=schema)
-        print(f"[VECTOR-DB] Created new semantic cache table: '{TABLE_NAME}' with dim={vector_dim}")
+        logger.info("Loaded existing semantic cache table", extra={"extra_data": {"table": TABLE_NAME}})
+    except Exception:
+        _cache_table = db.create_table(TABLE_NAME, schema=schema, exist_ok=True)
+        logger.info("Created new semantic cache table", extra={"extra_data": {"table": TABLE_NAME, "dim": vector_dim}})
         
     return _cache_table
 
@@ -83,7 +83,7 @@ def search_semantic_cache(query_vector: List[float], threshold: float = 0.88) ->
     distance = match.get("_distance", 1.0)
     similarity_score = 1.0 - distance
     
-    print(f"[VECTOR-DB] Top match similarity score: {similarity_score:.4f} (Threshold: {threshold})")
+    logger.info("Top match similarity score calculated", extra={"extra_data": {"similarity_score": round(similarity_score, 4), "threshold": threshold}})
     
     if similarity_score >= threshold:
         return {
@@ -111,4 +111,4 @@ def save_to_cache(vector: List[float], prompt: str, response: str, model: str):
     
     # Insert the record as a list of dictionaries
     table.add([record])
-    print(f"[VECTOR-DB] Successfully cached new semantic entry for model: {model}")
+    logger.info("Successfully cached new semantic entry", extra={"extra_data": {"model": model}})

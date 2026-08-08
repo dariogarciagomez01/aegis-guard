@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import Security, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel import Session, select
@@ -18,7 +19,7 @@ async def authenticate_key(
 
     # Step 1: Query the indexed key table for an active token match
     statement = select(ApiKey).where(ApiKey.key == raw_key, ApiKey.is_active == True)
-    api_key_record = session.exec(statement).first()
+    api_key_record = await asyncio.to_thread(lambda: session.exec(statement).first())
 
     if not api_key_record:
         raise HTTPException(

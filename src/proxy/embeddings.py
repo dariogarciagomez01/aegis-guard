@@ -1,7 +1,8 @@
 import httpx
 from typing import List
+from src.common.config import settings
+from src.utils.logger import logger
 
-OLLAMA_EMBED_URL = "http://127.0.0.1:11434/api/embeddings"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 
 class EmbeddingsEngine:
@@ -11,6 +12,7 @@ class EmbeddingsEngine:
         Send a plain text to the Ollama's endpoint and extract his vector from embeddings
         asynchronously and non-blocking.
         """
+        embed_url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/embeddings"
         payload = {
             "model": model,
             "prompt": text
@@ -18,7 +20,7 @@ class EmbeddingsEngine:
         
         try:
             async with httpx.AsyncClient(timeout=10.0, trust_env = False) as client:
-                response = await client.post(OLLAMA_EMBED_URL, json=payload)
+                response = await client.post(embed_url, json=payload)
                 
                 if response.status_code != 200:
                     raise RuntimeError(
@@ -33,5 +35,5 @@ class EmbeddingsEngine:
                 return embedding
                 
         except httpx.RequestError as e:
-            print(f"[ERROR-EMBEDDINGS] Connection failed to Ollama daemon: {str(e)}")
+            logger.error("Connection failed to Ollama daemon", extra={"extra_data": {"error": str(e)}})
             raise RuntimeError(f"Embeddings engine connection failure: {str(e)}")

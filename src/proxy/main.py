@@ -1,33 +1,108 @@
 import time
 import json
+import os
 import uuid
+import asyncio
 from typing import List, Optional, Any
 from contextlib import asynccontextmanager
-from src.database.connection import init_db
-from src.database.vector_db import init_vector_db
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, APIRouter
+
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import StreamingResponse
-from src.common.factory import ProviderFactory
 from pydantic import BaseModel
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+from src.database.connection import init_db
+from src.database.vector_db import init_vector_db, search_semantic_cache, save_to_cache
+from src.common.factory import ProviderFactory
 from src.common.providers import ChatMessage
 from src.proxy.auth import authenticate_key
 from src.database.models import ApiKey
 from src.proxy.limiter import limiter
 from src.proxy.embeddings import EmbeddingsEngine
-from src.database.vector_db import search_semantic_cache, save_to_cache
+from src.utils.logger import logger
+
+DISABLE_SEMANTIC_CACHE = os.getenv("DISABLE_SEMANTIC_CACHE", "false").lower() in ("true", "1")
+
+# --- PROMETHEUS METRICS DEFINITION ---
+REQUEST_COUNT = Counter(
+    "aegis_guard_requests_total",
+    "Total HTTP requests handled by Aegis Guard",
+    ["method", "endpoint", "status_code"]
+)
+
+REQUEST_LATENCY = Histogram(
+    "aegis_guard_request_duration_seconds",
+    "Request latency in seconds",
+    ["endpoint"]
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     init_vector_db(vector_dim=768)
+    logger.info("Application startup: Databases initialized")
     yield
 
 app = FastAPI(
     title="Aegis Guard Proxy",
     description="High-performance LLM reverse proxy and evaluation gateway",
     version="0.2.0",
-    lifespan = lifespan
+    lifespan=lifespan
 )
+
+# --- GLOBAL OBSERVABILITY MIDDLEWARE ---
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    start_time = time.perf_counter()
+    
+    auth_header = request.headers.get("Authorization", "")
+    api_key_suffix = auth_header[-6:] if len(auth_header) >= 6 else "none"
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        response: Response = await call_next(request)
+        process_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+        # Ignore /metrics endpoint to avoid polluting operational telemetry
+        if request.url.path != "/metrics":
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=request.url.path,
+                status_code=response.status_code
+            ).inc()
+            
+            REQUEST_LATENCY.labels(endpoint=request.url.path).observe(process_time_ms / 1000.0)
+
+            log_payload = {
+                "client_ip": client_ip,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "latency_ms": process_time_ms,
+                "api_key_suffix": api_key_suffix
+            }
+
+            if response.status_code < 400:
+                logger.info("Request processed successfully", extra={"extra_data": log_payload})
+            elif response.status_code == 429:
+                logger.warning("Rate limit threshold exceeded", extra={"extra_data": log_payload})
+            else:
+                logger.error("Request execution failed", extra={"extra_data": log_payload})
+
+        return response
+
+    except Exception as exc:
+        process_time_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        log_payload = {
+            "client_ip": client_ip,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": 500,
+            "latency_ms": process_time_ms,
+            "error": str(exc)
+        }
+        logger.critical("Unhandled proxy exception", extra={"extra_data": log_payload}, exc_info=True)
+        raise exc
 
 # Schema matching the OpenAI standard for incoming requests
 class ChatCompletionRequest(BaseModel):
@@ -60,7 +135,10 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
             # Calculate Time To First Token (TTFT) precisely
             if not ttft_measured:
                 ttft_ms = (time.perf_counter() - start_time) * 1000
-                print(f"[TELEMETRY] TTFT for model '{current_model}': {round(ttft_ms, 2)}ms")
+                logger.info(
+                    "TTFT measured",
+                    extra={"extra_data": {"model": current_model, "ttft_ms": round(ttft_ms, 2)}}
+                )
                 ttft_measured = True
                 
             # Build standard-compliant OpenAI chunk payload
@@ -81,12 +159,18 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
             
     except Exception as upstream_error:
         # Active Fault-Tolerant Fallback Interceptor
-        print(f"[WARNING] Primary engine '{current_model}' disrupted: {str(upstream_error)}")
+        logger.warning(
+            "Primary engine disrupted",
+            extra={"extra_data": {"model": current_model, "error": str(upstream_error)}}
+        )
         
         # If the failure happens on a cloud provider, execute zero-downtime hot-swap to local
         if "Ollama" not in active_provider.__class__.__name__:
             fallback_model = "llama3"
-            print(f"[RESILIENCE] Initiating automatic fallback routing to local engine: '{fallback_model}'")
+            logger.info(
+                "Initiating fallback routing",
+                extra={"extra_data": {"fallback_model": fallback_model}}
+            )
             
             try:
                 fallback_provider = ProviderFactory.get_provider(fallback_model)
@@ -111,10 +195,22 @@ async def execution_stream_generator(request: ChatCompletionRequest, primary_pro
                     }
                     yield f"data: {json.dumps(chunk_payload)}\n\n"
             except Exception as fallback_fatal:
+                logger.error(
+                    "Fallback engine failed",
+                    extra={"extra_data": {"error": str(fallback_fatal)}}
+                )
                 yield f"data: {json.dumps({'error': 'Fatal: Both cloud and local fallback nodes are unresponsive'})}\n\n"
         else:
-            # If local engine itself failed, surface error securely
             yield f"data: {json.dumps({'error': f'Local daemon unrecoverable: {str(upstream_error)}'})}\n\n"
+
+    stop_payload = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": created_time,
+        "model": current_model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+    }
+    yield f"data: {json.dumps(stop_payload)}\n\n"
 
     # Standard SSE protocol closure chunk
     yield "data: [DONE]\n\n"
@@ -127,8 +223,13 @@ async def cache_response_background(vector: list, prompt: str, response_text: st
     """
     try:
         save_to_cache(vector, prompt, response_text, model)
+        logger.info("Asynchronous semantic cache write successful", extra={"extra_data": {"model": model}})
     except Exception as e:
-        print(f"[ERROR-CACHE] Failed to write to semantic cache asynchronously: {str(e)}")
+        logger.error(
+            "Failed to write to semantic cache asynchronously",
+            extra={"extra_data": {"error": str(e)}}
+        )
+
 
 # --- SIMULATE STREAMING ON CACHE HIT ---
 async def cached_stream_generator(response_text: str, model: str):
@@ -139,11 +240,9 @@ async def cached_stream_generator(response_text: str, model: str):
     chunk_id = f"chatcmpl-cache-{uuid.uuid4().hex[:16]}"
     created_time = int(time.time())
     
-    # Split the cached text by words to mimic natural token generation streaming
     words = response_text.split(" ")
     
     for i, word in enumerate(words):
-        # Re-append space delimiter for all words except the trailing token
         space = " " if i < len(words) - 1 else ""
         content_chunk = word + space
         
@@ -165,10 +264,8 @@ async def cached_stream_generator(response_text: str, model: str):
             }
         }
         yield f"data: {json.dumps(chunk_payload)}\n\n"
-        # Tiny non-blocking sleep (5ms) to give a smooth, blazing-fast stream feel
         await asyncio.sleep(0.005)
         
-    # Standard OpenAI protocol final sequence termination chunks
     stop_payload = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
@@ -188,11 +285,9 @@ async def caching_stream_generator(request, provider, query_vector, user_prompt,
     """
     full_response_text = ""
     
-    # Consume the original stream generator coming from your provider pipeline
     async for chunk in execution_stream_generator(request, provider):
         yield chunk
         
-        # Intercept and safely parse text content delta from the active SSE chunk string
         try:
             chunk_str = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
             if chunk_str.startswith("data: ") and "[DONE]" not in chunk_str:
@@ -205,11 +300,9 @@ async def caching_stream_generator(request, provider, query_vector, user_prompt,
                     if content:
                         full_response_text += content
         except Exception:
-            # Passive Resilience: If an individual chunk fails parsing, do not drop the client stream connection
             pass
             
-    # CRITICAL: Once the stream has been completely drained, offload the text data into LanceDB
-    if query_vector and full_response_text:
+    if query_vector and full_response_text and not DISABLE_SEMANTIC_CACHE:
         background_tasks.add_task(
             cache_response_background,
             query_vector,
@@ -223,6 +316,11 @@ async def health_check():
     """Simple health endpoint to verify the proxy is live."""
     return {"status": "healthy", "service": "aegis-guard-proxy"}
 
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Exposes Prometheus operational metrics."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -234,6 +332,10 @@ async def chat_completions(
     dynamically, measures high-resolution latency, and captures background caching streams.
     """
     if await limiter.is_rate_limited(api_key.key, api_key.rate_limit_rpm):
+        logger.warning(
+            "Rate limit exceeded",
+            extra={"extra_data": {"user_id": api_key.user_id, "limit": api_key.rate_limit_rpm}}
+        )
         raise HTTPException(
             status_code=429,
             detail={
@@ -252,20 +354,23 @@ async def chat_completions(
         user_prompt = ""
         if request.messages:
             last_msg = request.messages[-1]
-            user_prompt = getattr(last_msg, "content", "") or last_msg.get("content", "")
+            user_prompt = getattr(last_msg, "content", "") or (last_msg.get("content", "") if isinstance(last_msg, dict) else "")
 
         query_vector = None
         
         # --- FAST-PATH: SEMANTIC CACHE EVALUATION ---
-        if user_prompt:
+        if user_prompt and not DISABLE_SEMANTIC_CACHE:
             try:
                 query_vector = await EmbeddingsEngine.get_embedding(user_prompt)
-                cache_hit = search_semantic_cache(query_vector, threshold=0.88)
+                cache_hit = await asyncio.to_thread(search_semantic_cache, query_vector, 0.88)
                 
                 if cache_hit:
                     # STREAMING CACHE HIT ROUTE
                     if request.stream:
-                        print(f"[CACHE-HIT] Serving streaming semantic match response.")
+                        logger.info(
+                            "Serving streaming semantic cache match",
+                            extra={"extra_data": {"type": "stream", "model": request.model}}
+                        )
                         return StreamingResponse(
                             cached_stream_generator(cache_hit["response_text"], request.model),
                             media_type="text/event-stream"
@@ -273,7 +378,16 @@ async def chat_completions(
                     # STATIC CACHE HIT ROUTE
                     else:
                         latency_seconds = time.perf_counter() - start_time
-                        print(f"[CACHE-HIT] Serving static semantic match response in {latency_seconds * 1000:.2f}ms")
+                        logger.info(
+                            "Serving static semantic cache match",
+                            extra={
+                                "extra_data": {
+                                    "type": "static",
+                                    "latency_ms": round(latency_seconds * 1000, 2),
+                                    "similarity_score": round(cache_hit["similarity_score"], 4)
+                                }
+                            }
+                        )
                         return {
                             "id": f"chatcmpl-cache-{uuid.uuid4().hex[:16]}",
                             "object": "chat.completion",
@@ -294,13 +408,19 @@ async def chat_completions(
                             }
                         }
             except Exception as embed_err:
-                print(f"[CACHE-BYPASS] Semantic engine exception: {str(embed_err)}. Falling back to live LLM.")
+                logger.warning(
+                    "Semantic engine exception, falling back to live LLM",
+                    extra={"extra_data": {"error": str(embed_err)}}
+                )
 
         provider = ProviderFactory.get_provider(request.model)
 
         # --- STREAMING CACHE MISS ROUTE ---
         if request.stream:
-            print("[CACHE-MISS] Streaming request detected. Wrapping generator to intercept output text.")
+            logger.info(
+                "Cache miss: streaming request detected",
+                extra={"extra_data": {"model": request.model}}
+            )
             return StreamingResponse(
                 caching_stream_generator(request, provider, query_vector, user_prompt, background_tasks),
                 media_type="text/event-stream"
@@ -318,7 +438,18 @@ async def chat_completions(
         latency_seconds = time.perf_counter() - start_time
         provider_name = provider.__class__.__name__.replace("Provider", "").lower()
         
-        if query_vector and raw_response:
+        logger.info(
+            "Live LLM request processed",
+            extra={
+                "extra_data": {
+                    "provider": provider_name,
+                    "model": request.model,
+                    "latency_ms": round(latency_seconds * 1000, 2)
+                }
+            }
+        )
+
+        if query_vector and raw_response and not DISABLE_SEMANTIC_CACHE:
             background_tasks.add_task(
                 cache_response_background,
                 query_vector,
@@ -347,6 +478,8 @@ async def chat_completions(
         }
         
     except RuntimeError as e:
+        logger.error("Provider execution error", extra={"extra_data": {"error": str(e)}})
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal Proxy Error")
+        logger.error("Internal Proxy Error", extra={"extra_data": {"error": str(e)}})
+        raise HTTPException(status_code=500, detail="Internal Proxy Error")

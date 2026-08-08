@@ -1,0 +1,7 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+aegis_guard.db
+src/database/vector_store/

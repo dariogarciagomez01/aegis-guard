@@ -219,3 +219,13 @@ __marimo__/
 
 # Cores & Secrets
 .env
+
+# Database & Vector Store
+*.db
+*.sqlite
+aegis_guard.db
+src/database/vector_store/
+
+# OS & IDE
+.DS_Store
+.vscode/

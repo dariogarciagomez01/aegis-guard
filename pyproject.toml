@@ -1,25 +1,44 @@
 [project]
 name = "aegis-guard"
 version = "0.1.0"
-description = "Inverse proxy and AI evaluator"
+description = "High-performance LLM reverse proxy and evaluation gateway"
 authors = [
-    {name = "dariogarciagomez01",email = "dariogarciagomez01@gmail.com"}
+    {name = "dariogarciagomez01", email = "dariogarciagomez01@gmail.com"}
 ]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
-    "fastapi (>=0.139.0,<0.140.0)",
-    "uvicorn (>=0.51.0,<0.52.0)",
-    "pydantic (>=2.13.4,<3.0.0)",
-    "httpx (>=0.28.1,<0.29.0)",
-    "pydantic-settings (>=2.14.2,<3.0.0)",
-    "sqlmodel (>=0.0.39,<0.0.40)",
-    "lancedb (>=0.34.0,<0.35.0)",
-    "numpy (>=2.5.1,<3.0.0)"
+    "fastapi (>=0.115.0)",
+    "uvicorn (>=0.30.0)",
+    "pydantic (>=2.0.0)",
+    "httpx (>=0.27.0)",
+    "pydantic-settings (>=2.0.0)",
+    "sqlmodel (>=0.0.14)",
+    "lancedb (>=0.5.0)",
+    "numpy (>=1.26.0)",
+    "locust (>=2.46.3,<3.0.0)",
+    "prometheus-client (>=0.26.0,<0.27.0)"
 ]
 
+[tool.poetry]
+name = "aegis-guard"
+version = "0.1.0"
+description = "High-performance LLM reverse proxy and evaluation gateway"
+authors = ["Erik Garcia Gomez"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = ">=0.115.0"
+uvicorn = ">=0.30.0"
+pydantic = ">=2.0.0"
+httpx = ">=0.27.0"
+pydantic-settings = ">=2.0.0"
+sqlmodel = ">=0.0.14"
+lancedb = ">=0.5.0"
+numpy = ">=1.26.0"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=2.0.0"]
 build-backend = "poetry.core.masonry.api"

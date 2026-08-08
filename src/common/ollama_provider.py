@@ -2,20 +2,22 @@ import json
 from typing import List, Any, AsyncGenerator
 import httpx
 from src.common.providers import BaseProvider, ChatMessage
+from src.common.config import settings
 
 class OllamaProvider(BaseProvider):
     """
     Concrete implementation of BaseProvider for interacting with a local Ollama instance.
     """
     
-    def __init__(self, base_url: str = "http://localhost:11434", model_name: str = "llama3"):
+    def __init__(self, base_url: str = None, model_name: str = "llama3"):
         """
         Initializes the Ollama adapter.
         
         :param base_url: The network address where Ollama is listening.
         :param model_name: The specific local model to target (e.g., llama3, mistral, phi3).
         """
-        self.base_url = f"{base_url.rstrip('/')}/api/chat"
+        resolved_base_url = base_url if base_url is not None else settings.OLLAMA_BASE_URL
+        self.base_url = f"{resolved_base_url.rstrip('/')}/api/chat"
         self.model_name = model_name
 
     async def generate(self, messages: List[ChatMessage], **kwargs: Any) -> str:
