@@ -229,3 +229,11 @@ src/database/vector_store/
 # OS & IDE
 .DS_Store
 .vscode/
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+override.tf
+override.tf.json
